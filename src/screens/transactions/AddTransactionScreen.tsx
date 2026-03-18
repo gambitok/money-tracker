@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { format, isValid, parse } from 'date-fns';
+import { format, isValid, parse, parseISO } from 'date-fns';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
@@ -10,7 +10,12 @@ import { Button, Card, HelperText, SegmentedButtons, Text, TextInput } from 'rea
 
 import type { TransactionType } from '@/types/domain';
 import { useCategories } from '@/hooks/useCategories';
-import { useCreateTransaction } from '@/hooks/useTransactions';
+import {
+  useCreateTransaction,
+  useDeleteTransaction,
+  useTransaction,
+  useUpdateTransaction,
+} from '@/hooks/useTransactions';
 import { toISODate } from '@/utils/dates';
 import { SelectField, type SelectOption } from '@/components/fields/SelectField';
 
@@ -32,24 +37,25 @@ const commonCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD'];
 
 export function AddTransactionScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ id?: string | string[] }>();
+  const transactionId = typeof params.id === 'string' ? params.id : undefined;
+  const isEditing = !!transactionId;
+
   const createTx = useCreateTransaction();
+  const updateTx = useUpdateTransaction(transactionId ?? '');
+  const deleteTx = useDeleteTransaction(transactionId ?? '');
+  const transactionQuery = useTransaction(transactionId);
+
   const [serverError, setServerError] = useState<string | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [webDateValue, setWebDateValue] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const handleBack = () => {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-
-    router.replace('/(tabs)/transactions');
-  };
 
   const {
     control,
     watch,
     handleSubmit,
     setValue,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -62,6 +68,21 @@ export function AddTransactionScreen() {
       date: new Date(),
     },
   });
+
+  useEffect(() => {
+    if (!transactionQuery.data) return;
+
+    const parsedDate = parseISO(transactionQuery.data.date);
+    reset({
+      type: transactionQuery.data.type,
+      amount: String(transactionQuery.data.amount),
+      currency: transactionQuery.data.currency,
+      categoryId: transactionQuery.data.category_id,
+      description: transactionQuery.data.description ?? '',
+      date: parsedDate,
+    });
+    setWebDateValue(format(parsedDate, 'yyyy-MM-dd'));
+  }, [reset, transactionQuery.data]);
 
   const type = watch('type') as TransactionType;
   const selectedDate = watch('date');
@@ -81,26 +102,65 @@ export function AddTransactionScreen() {
     }));
   }, [categories]);
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace('/(tabs)/transactions');
+  };
+
   const onSubmit = useMemo(
     () =>
       handleSubmit(async (v) => {
         setServerError(null);
         try {
-          await createTx.mutateAsync({
+          const payload = {
             type: v.type,
             amount: Number(v.amount),
             currency: v.currency,
             categoryId: v.categoryId,
             description: v.description?.trim() ? v.description.trim() : null,
             date: toISODate(v.date),
-          });
+          };
+
+          if (isEditing && transactionId) {
+            await updateTx.mutateAsync(payload);
+          } else {
+            await createTx.mutateAsync(payload);
+          }
+
           handleBack();
         } catch (e) {
-          setServerError(e instanceof Error ? e.message : 'Failed to add transaction');
+          setServerError(e instanceof Error ? e.message : 'Failed to save transaction');
         }
       }),
-    [createTx, handleSubmit, router]
+    [createTx, handleSubmit, isEditing, transactionId, updateTx]
   );
+
+  const onDelete = () => {
+    if (!transactionId) return;
+
+    Alert.alert('Delete transaction', 'This action cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            setServerError(null);
+            await deleteTx.mutateAsync();
+            handleBack();
+          } catch (e) {
+            setServerError(e instanceof Error ? e.message : 'Failed to delete transaction');
+          }
+        },
+      },
+    ]);
+  };
+
+  const isBusy = isSubmitting || createTx.isPending || updateTx.isPending || deleteTx.isPending;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -108,9 +168,12 @@ export function AddTransactionScreen() {
         <Button mode="text" onPress={handleBack}>
           Back
         </Button>
-        <Text variant="headlineSmall">Add transaction</Text>
+        <Text variant="headlineSmall">{isEditing ? 'Edit transaction' : 'Add transaction'}</Text>
         <View style={styles.headerSpacer} />
       </View>
+
+      {isEditing && transactionQuery.isLoading ? <Text>Loading transaction…</Text> : null}
+      {isEditing && transactionQuery.error ? <Text>Failed to load transaction.</Text> : null}
 
       <Card style={styles.card}>
         <Card.Content style={styles.cardContent}>
@@ -242,13 +305,20 @@ export function AddTransactionScreen() {
         {serverError}
       </HelperText>
 
-      <Button
-        mode="contained"
-        onPress={onSubmit}
-        loading={isSubmitting || createTx.isPending}
-        disabled={isSubmitting || createTx.isPending}>
-        Save
+      <Button mode="contained" onPress={onSubmit} loading={isBusy} disabled={isBusy || transactionQuery.isLoading}>
+        {isEditing ? 'Save changes' : 'Save'}
       </Button>
+
+      {isEditing ? (
+        <Button
+          mode="outlined"
+          onPress={onDelete}
+          loading={deleteTx.isPending}
+          disabled={isBusy}
+          textColor="#D14B61">
+          Delete transaction
+        </Button>
+      ) : null}
     </ScrollView>
   );
 }

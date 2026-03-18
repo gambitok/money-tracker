@@ -10,6 +10,11 @@ type SessionState = {
 
 const SessionContext = createContext<SessionState | null>(null);
 
+function isInvalidRefreshTokenError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message.toLowerCase().includes('refresh token');
+}
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [initializing, setInitializing] = useState(true);
@@ -17,9 +22,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data, error }) => {
+    supabase.auth.getSession().then(async ({ data, error }) => {
       if (!mounted) return;
       if (error) {
+        if (isInvalidRefreshTokenError(error)) {
+          await supabase.auth.signOut({ scope: 'local' });
+        }
         // If this fails, we still want the app to render; auth screens will handle login.
         setSession(null);
       } else {
@@ -50,4 +58,3 @@ export function useSession() {
   if (!ctx) throw new Error('useSession must be used inside SessionProvider');
   return ctx;
 }
-

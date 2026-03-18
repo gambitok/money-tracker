@@ -41,6 +41,19 @@ create table if not exists public.transactions (
 create index if not exists transactions_user_date_idx on public.transactions(user_id, date desc);
 create index if not exists transactions_user_type_date_idx on public.transactions(user_id, type, date desc);
 
+-- Monthly budgets by expense category
+create table if not exists public.budgets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  category_id uuid not null references public.categories(id) on delete cascade,
+  month date not null,
+  amount numeric(14, 2) not null check (amount > 0),
+  created_at timestamptz not null default now(),
+  unique (user_id, category_id, month)
+);
+
+create index if not exists budgets_user_month_idx on public.budgets(user_id, month desc);
+
 -- Exchange rates for conversions to user base currency
 create table if not exists public.exchange_rates (
   from_currency text not null,
@@ -74,6 +87,7 @@ create trigger on_auth_user_created
 alter table public.users enable row level security;
 alter table public.categories enable row level security;
 alter table public.transactions enable row level security;
+alter table public.budgets enable row level security;
 alter table public.exchange_rates enable row level security;
 
 -- users: only self can read/update. Inserts only happen via trigger.
@@ -160,3 +174,32 @@ create policy "exchange_rates_read_authenticated"
   to authenticated
   using (true);
 
+-- budgets: owner-only CRUD
+drop policy if exists "budgets_select_own" on public.budgets;
+create policy "budgets_select_own"
+  on public.budgets
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+drop policy if exists "budgets_insert_own" on public.budgets;
+create policy "budgets_insert_own"
+  on public.budgets
+  for insert
+  to authenticated
+  with check (user_id = auth.uid());
+
+drop policy if exists "budgets_update_own" on public.budgets;
+create policy "budgets_update_own"
+  on public.budgets
+  for update
+  to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+drop policy if exists "budgets_delete_own" on public.budgets;
+create policy "budgets_delete_own"
+  on public.budgets
+  for delete
+  to authenticated
+  using (user_id = auth.uid());

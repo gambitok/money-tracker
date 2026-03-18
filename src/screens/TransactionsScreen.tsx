@@ -1,15 +1,21 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, SectionList, StyleSheet, View } from 'react-native';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import { addMonths, format, isToday, isYesterday, parseISO } from 'date-fns';
 import { SymbolView } from 'expo-symbols';
-import { Button, Card, Text, useTheme } from 'react-native-paper';
+import { Button, Card, SegmentedButtons, Text, TextInput, useTheme } from 'react-native-paper';
 
 import { useFeed } from '@/hooks/useFeed';
+import { SelectField, type SelectOption } from '@/components/fields/SelectField';
+import type { TransactionType } from '@/types/domain';
 
 export function TransactionsScreen() {
+  const router = useRouter();
   const theme = useTheme();
   const [monthDate, setMonthDate] = useState(() => new Date());
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'all' | TransactionType>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const { data, isLoading, error } = useFeed(monthDate);
   const incomeColor = '#1D9B5F';
   const expenseColor = '#D14B61';
@@ -28,10 +34,25 @@ export function TransactionsScreen() {
     return map;
   }, [data?.categories]);
 
+  const filteredTransactions = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    return (data?.transactions ?? []).filter((transaction) => {
+      if (typeFilter !== 'all' && transaction.type !== typeFilter) return false;
+      if (categoryFilter && transaction.category_id !== categoryFilter) return false;
+
+      if (!normalizedSearch) return true;
+
+      const categoryName = categoryNameById.get(transaction.category_id ?? '') ?? 'uncategorized';
+      const haystack = `${categoryName} ${transaction.description ?? ''} ${transaction.currency}`.toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [categoryFilter, categoryNameById, data?.transactions, search, typeFilter]);
+
   const sections = useMemo(() => {
     const groups = new Map<string, NonNullable<typeof data>['transactions']>();
 
-    for (const transaction of data?.transactions ?? []) {
+    for (const transaction of filteredTransactions) {
       const current = groups.get(transaction.date) ?? [];
       current.push(transaction);
       groups.set(transaction.date, current);
@@ -42,7 +63,18 @@ export function TransactionsScreen() {
       date,
       data: transactions,
     }));
-  }, [data?.transactions]);
+  }, [filteredTransactions]);
+
+  const categoryOptions = useMemo<SelectOption<string>[]>(() => {
+    return (data?.categories ?? [])
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((category) => ({
+        value: category.id,
+        label: category.name,
+        leadingColor: category.color ?? undefined,
+      }));
+  }, [data?.categories]);
 
   const monthLabel = format(monthDate, 'LLLL yyyy');
   const canGoNextMonth = format(addMonths(monthDate, 1), 'yyyy-MM') <= format(new Date(), 'yyyy-MM');
@@ -114,6 +146,38 @@ export function TransactionsScreen() {
             {data?.missingRates.length ? <Text style={styles.warning}>Some currencies are not converted yet.</Text> : null}
           </View>
 
+          <Card mode="outlined" style={styles.filtersCard}>
+            <Card.Content style={styles.filtersContent}>
+              <TextInput
+                label="Search"
+                mode="outlined"
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Description, category or currency"
+              />
+
+              <SegmentedButtons
+                value={typeFilter}
+                onValueChange={(value) => setTypeFilter(value as 'all' | TransactionType)}
+                buttons={[
+                  { value: 'all', label: 'All' },
+                  { value: 'expense', label: 'Expense' },
+                  { value: 'income', label: 'Income' },
+                ]}
+              />
+
+              <SelectField
+                label="Category filter"
+                value={categoryFilter}
+                options={categoryOptions}
+                allowNull
+                nullLabel="All categories"
+                placeholder="All categories"
+                onChange={setCategoryFilter}
+              />
+            </Card.Content>
+          </Card>
+
           {isLoading ? <Text>Loading…</Text> : null}
           {error ? <Text>Failed to load feed.</Text> : null}
         </View>
@@ -132,7 +196,9 @@ export function TransactionsScreen() {
         const iconName = item.type === 'income' ? 'arrow.down.left.circle.fill' : 'arrow.up.right.circle.fill';
 
         return (
-          <View style={[styles.row, { borderBottomColor: theme.colors.outlineVariant }]}>
+          <Pressable
+            onPress={() => router.push(`/transaction/${item.id}`)}
+            style={[styles.row, { borderBottomColor: theme.colors.outlineVariant }]}>
             <View style={[styles.iconWrap, { backgroundColor: categoryMeta?.color ?? theme.colors.surfaceVariant }]}>
               <SymbolView name={iconName} size={18} tintColor={theme.colors.onSurface} />
             </View>
@@ -150,15 +216,21 @@ export function TransactionsScreen() {
               </Text>
               <Text style={styles.currencyText}>{item.currency}</Text>
             </View>
-          </View>
+          </Pressable>
         );
       }}
       ListEmptyComponent={
         !isLoading && !error ? (
           <Card mode="outlined">
             <Card.Content>
-              <Text style={styles.emptyTitle}>No transactions this month.</Text>
-              <Text style={styles.subtitle}>Add your first income or expense to start the feed.</Text>
+              <Text style={styles.emptyTitle}>
+                {search || typeFilter !== 'all' || categoryFilter ? 'No matching transactions.' : 'No transactions this month.'}
+              </Text>
+              <Text style={styles.subtitle}>
+                {search || typeFilter !== 'all' || categoryFilter
+                  ? 'Try changing the search or filters.'
+                  : 'Add your first income or expense to start the feed.'}
+              </Text>
             </Card.Content>
           </Card>
         ) : null
@@ -249,6 +321,12 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'right',
     fontSize: 12,
+  },
+  filtersCard: {
+    borderRadius: 20,
+  },
+  filtersContent: {
+    gap: 12,
   },
   sectionTitle: {
     marginTop: 8,

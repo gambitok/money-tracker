@@ -22,3 +22,11 @@ export type Transaction = {
   created_at?: string;
 };
 
+export type Budget = {
+  id: string;
+  user_id: string;
+  category_id: string;
+  month: string; // yyyy-mm-dd, first day of month
+  amount: number;
+  created_at?: string;
+};

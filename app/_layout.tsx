@@ -61,7 +61,9 @@ function RootLayoutNav() {
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="categories" options={{ headerShown: true, title: 'Categories' }} />
+            <Stack.Screen name="budgets" options={{ headerShown: true, title: 'Budgets' }} />
             <Stack.Screen name="transaction/new" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="transaction/[id]" options={{ presentation: 'modal' }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', headerShown: true }} />
           </Stack>
         </ThemeProvider>

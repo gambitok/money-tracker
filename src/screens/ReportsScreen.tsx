@@ -1,16 +1,18 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { addMonths, format } from 'date-fns';
-import { Card, SegmentedButtons, Text, useTheme } from 'react-native-paper';
+import { Card, ProgressBar, SegmentedButtons, Text, useTheme } from 'react-native-paper';
 
 import { useReports } from '@/hooks/useReports';
 import { CategoryDonutChart } from '@/components/charts/CategoryDonutChart';
+import { useBudgets } from '@/hooks/useBudgets';
 
 export function ReportsScreen() {
   const theme = useTheme();
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [activeType, setActiveType] = useState<'expense' | 'income'>('expense');
   const { data, isLoading, error } = useReports('month', monthDate);
+  const { data: budgets } = useBudgets(monthDate);
 
   const monthLabel = format(monthDate, 'LLLL yyyy');
   const canGoNextMonth = format(addMonths(monthDate, 1), 'yyyy-MM') <= format(new Date(), 'yyyy-MM');
@@ -27,6 +29,25 @@ export function ReportsScreen() {
   const activeTotal = activeType === 'expense' ? data?.expenseTotal ?? 0 : data?.incomeTotal ?? 0;
   const activeTitle = activeType === 'expense' ? 'Expenses by category' : 'Income by category';
   const activeSubtitle = activeType === 'expense' ? 'Spent this month' : 'Received this month';
+  const budgetProgress = useMemo(() => {
+    const budgetMap = new Map((budgets ?? []).map((budget) => [budget.category_id, Number(budget.amount)]));
+    return (data?.expenseByCategory ?? [])
+      .filter((item) => item.category?.id && budgetMap.has(item.category.id))
+      .map((item) => {
+        const budgetAmount = budgetMap.get(item.category!.id)!;
+        const spent = item.amount;
+        const progress = budgetAmount > 0 ? Math.min(spent / budgetAmount, 1) : 0;
+        return {
+          categoryId: item.category!.id,
+          label: item.category!.name,
+          spent,
+          budgetAmount,
+          progress,
+          overBudget: spent > budgetAmount,
+        };
+      })
+      .sort((a, b) => b.spent - a.spent);
+  }, [budgets, data?.expenseByCategory]);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -118,6 +139,38 @@ export function ReportsScreen() {
               )}
             </Card.Content>
           </Card>
+
+          {activeType === 'expense' ? (
+            <Card style={styles.card}>
+              <Card.Content style={styles.chartCardContent}>
+                <Text variant="titleMedium">Budget progress</Text>
+                {budgetProgress.length ? (
+                  <View style={styles.budgetList}>
+                    {budgetProgress.map((item) => (
+                      <View key={item.categoryId} style={styles.budgetRow}>
+                        <View style={styles.budgetHeader}>
+                          <Text variant="bodyLarge">{item.label}</Text>
+                          <Text style={item.overBudget ? styles.overBudgetText : undefined}>
+                            {formatMoney(item.spent, data.baseCurrency)} / {formatMoney(item.budgetAmount, data.baseCurrency)}
+                          </Text>
+                        </View>
+                        <ProgressBar
+                          progress={item.progress}
+                          color={item.overBudget ? '#D14B61' : '#1D9B5F'}
+                          style={styles.progressBar}
+                        />
+                        <Text style={styles.legendPercent}>
+                          {item.overBudget ? 'Over budget' : `${Math.round(item.progress * 100)}% used`}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.subtitle}>No budgets set for this month yet.</Text>
+                )}
+              </Card.Content>
+            </Card>
+          ) : null}
         </>
       ) : null}
     </ScrollView>
@@ -206,6 +259,25 @@ const styles = StyleSheet.create({
   },
   legendList: {
     gap: 12,
+  },
+  budgetList: {
+    gap: 16,
+  },
+  budgetRow: {
+    gap: 8,
+  },
+  budgetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  progressBar: {
+    height: 10,
+    borderRadius: 999,
+  },
+  overBudgetText: {
+    color: '#D14B61',
   },
   legendRow: {
     flexDirection: 'row',
