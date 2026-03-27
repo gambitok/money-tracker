@@ -9,6 +9,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { useCategories } from '@/hooks/useCategories';
 import { useBudgets, useDeleteBudget, useUpsertBudget } from '@/hooks/useBudgets';
 import { SelectField, type SelectOption } from '@/components/fields/SelectField';
+import { useFeedback } from '@/providers/FeedbackProvider';
 
 const schema = z.object({
   categoryId: z.string().uuid('Select a category'),
@@ -27,6 +28,7 @@ export function BudgetsScreen() {
   const { data: budgets, isLoading, error } = useBudgets(monthDate);
   const upsertBudget = useUpsertBudget(monthDate);
   const deleteBudget = useDeleteBudget();
+  const { showMessage } = useFeedback();
 
   const {
     control,
@@ -67,6 +69,7 @@ export function BudgetsScreen() {
             amount: Number(values.amount),
           });
           reset({ categoryId: '', amount: '' });
+          showMessage('Budget saved');
         } catch (e) {
           setServerError(e instanceof Error ? e.message : 'Failed to save budget');
         }
@@ -145,7 +148,13 @@ export function BudgetsScreen() {
               title={categoryNameById.get(budget.category_id) ?? 'Category'}
               description={`${Number(budget.amount).toFixed(2)} budgeted`}
               right={() => (
-                <Button mode="text" textColor="#D14B61" onPress={() => deleteBudget.mutate(budget.id)}>
+                <Button
+                  mode="text"
+                  textColor="#D14B61"
+                  onPress={async () => {
+                    await deleteBudget.mutateAsync(budget.id);
+                    showMessage('Budget deleted');
+                  }}>
                   Delete
                 </Button>
               )}

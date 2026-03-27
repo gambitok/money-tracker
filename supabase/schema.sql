@@ -54,6 +54,25 @@ create table if not exists public.budgets (
 
 create index if not exists budgets_user_month_idx on public.budgets(user_id, month desc);
 
+-- Recurring transactions
+create table if not exists public.recurring_transactions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  type text not null check (type in ('income', 'expense')),
+  amount numeric(14, 2) not null check (amount > 0),
+  currency text not null,
+  category_id uuid references public.categories(id) on delete set null,
+  description text,
+  frequency text not null check (frequency in ('monthly')),
+  start_date date not null,
+  next_run_date date not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists recurring_transactions_user_next_run_idx
+  on public.recurring_transactions(user_id, next_run_date desc);
+
 -- Exchange rates for conversions to user base currency
 create table if not exists public.exchange_rates (
   from_currency text not null,
@@ -88,6 +107,7 @@ alter table public.users enable row level security;
 alter table public.categories enable row level security;
 alter table public.transactions enable row level security;
 alter table public.budgets enable row level security;
+alter table public.recurring_transactions enable row level security;
 alter table public.exchange_rates enable row level security;
 
 -- users: only self can read/update. Inserts only happen via trigger.
@@ -162,6 +182,36 @@ create policy "transactions_update_own"
 drop policy if exists "transactions_delete_own" on public.transactions;
 create policy "transactions_delete_own"
   on public.transactions
+  for delete
+  to authenticated
+  using (user_id = auth.uid());
+
+-- recurring_transactions: owner-only CRUD
+drop policy if exists "recurring_transactions_select_own" on public.recurring_transactions;
+create policy "recurring_transactions_select_own"
+  on public.recurring_transactions
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+drop policy if exists "recurring_transactions_insert_own" on public.recurring_transactions;
+create policy "recurring_transactions_insert_own"
+  on public.recurring_transactions
+  for insert
+  to authenticated
+  with check (user_id = auth.uid());
+
+drop policy if exists "recurring_transactions_update_own" on public.recurring_transactions;
+create policy "recurring_transactions_update_own"
+  on public.recurring_transactions
+  for update
+  to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+drop policy if exists "recurring_transactions_delete_own" on public.recurring_transactions;
+create policy "recurring_transactions_delete_own"
+  on public.recurring_transactions
   for delete
   to authenticated
   using (user_id = auth.uid());

@@ -16,6 +16,8 @@ import {
   useTransaction,
   useUpdateTransaction,
 } from '@/hooks/useTransactions';
+import { useCreateRecurringTransaction } from '@/hooks/useRecurringTransactions';
+import { useFeedback } from '@/providers/FeedbackProvider';
 import { toISODate } from '@/utils/dates';
 import { SelectField, type SelectOption } from '@/components/fields/SelectField';
 
@@ -37,18 +39,23 @@ const commonCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD'];
 
 export function AddTransactionScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id?: string | string[] }>();
+  const params = useLocalSearchParams<{ id?: string | string[]; duplicateId?: string | string[] }>();
   const transactionId = typeof params.id === 'string' ? params.id : undefined;
+  const duplicateId = typeof params.duplicateId === 'string' ? params.duplicateId : undefined;
   const isEditing = !!transactionId;
 
   const createTx = useCreateTransaction();
   const updateTx = useUpdateTransaction(transactionId ?? '');
   const deleteTx = useDeleteTransaction(transactionId ?? '');
+  const createRecurring = useCreateRecurringTransaction();
   const transactionQuery = useTransaction(transactionId);
+  const duplicateQuery = useTransaction(duplicateId);
+  const { showMessage } = useFeedback();
 
   const [serverError, setServerError] = useState<string | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [webDateValue, setWebDateValue] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [saveRecurring, setSaveRecurring] = useState(false);
 
   const {
     control,
@@ -70,19 +77,20 @@ export function AddTransactionScreen() {
   });
 
   useEffect(() => {
-    if (!transactionQuery.data) return;
+    const source = transactionQuery.data ?? duplicateQuery.data;
+    if (!source) return;
 
-    const parsedDate = parseISO(transactionQuery.data.date);
+    const parsedDate = parseISO(source.date);
     reset({
-      type: transactionQuery.data.type,
-      amount: String(transactionQuery.data.amount),
-      currency: transactionQuery.data.currency,
-      categoryId: transactionQuery.data.category_id,
-      description: transactionQuery.data.description ?? '',
+      type: source.type,
+      amount: String(source.amount),
+      currency: source.currency,
+      categoryId: source.category_id,
+      description: source.description ?? '',
       date: parsedDate,
     });
     setWebDateValue(format(parsedDate, 'yyyy-MM-dd'));
-  }, [reset, transactionQuery.data]);
+  }, [duplicateQuery.data, reset, transactionQuery.data]);
 
   const type = watch('type') as TransactionType;
   const selectedDate = watch('date');
@@ -127,8 +135,20 @@ export function AddTransactionScreen() {
 
           if (isEditing && transactionId) {
             await updateTx.mutateAsync(payload);
+            showMessage('Transaction updated');
           } else {
             await createTx.mutateAsync(payload);
+            if (saveRecurring) {
+              await createRecurring.mutateAsync({
+                type: payload.type,
+                amount: payload.amount,
+                currency: payload.currency,
+                categoryId: payload.categoryId,
+                description: payload.description,
+                startDate: payload.date,
+              });
+            }
+            showMessage(saveRecurring ? 'Transaction and recurring rule created' : 'Transaction created');
           }
 
           handleBack();
@@ -136,7 +156,7 @@ export function AddTransactionScreen() {
           setServerError(e instanceof Error ? e.message : 'Failed to save transaction');
         }
       }),
-    [createTx, handleSubmit, isEditing, transactionId, updateTx]
+    [createRecurring, createTx, handleSubmit, isEditing, saveRecurring, showMessage, transactionId, updateTx]
   );
 
   const onDelete = () => {
@@ -151,6 +171,7 @@ export function AddTransactionScreen() {
           try {
             setServerError(null);
             await deleteTx.mutateAsync();
+            showMessage('Transaction deleted');
             handleBack();
           } catch (e) {
             setServerError(e instanceof Error ? e.message : 'Failed to delete transaction');
@@ -160,7 +181,8 @@ export function AddTransactionScreen() {
     ]);
   };
 
-  const isBusy = isSubmitting || createTx.isPending || updateTx.isPending || deleteTx.isPending;
+  const isBusy =
+    isSubmitting || createTx.isPending || updateTx.isPending || deleteTx.isPending || createRecurring.isPending;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -168,11 +190,13 @@ export function AddTransactionScreen() {
         <Button mode="text" onPress={handleBack}>
           Back
         </Button>
-        <Text variant="headlineSmall">{isEditing ? 'Edit transaction' : 'Add transaction'}</Text>
+        <Text variant="headlineSmall">{isEditing ? 'Edit transaction' : duplicateId ? 'Duplicate transaction' : 'Add transaction'}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
-      {isEditing && transactionQuery.isLoading ? <Text>Loading transaction…</Text> : null}
+      {(isEditing && transactionQuery.isLoading) || (!isEditing && !!duplicateId && duplicateQuery.isLoading) ? (
+        <Text>Loading transaction…</Text>
+      ) : null}
       {isEditing && transactionQuery.error ? <Text>Failed to load transaction.</Text> : null}
 
       <Card style={styles.card}>
@@ -257,6 +281,11 @@ export function AddTransactionScreen() {
           <HelperText type="error" visible={!!errors.description}>
             {errors.description?.message}
           </HelperText>
+          {!isEditing ? (
+            <Button mode={saveRecurring ? 'contained-tonal' : 'outlined'} onPress={() => setSaveRecurring((value) => !value)}>
+              {saveRecurring ? 'Monthly recurring: on' : 'Create monthly recurring rule'}
+            </Button>
+          ) : null}
         </Card.Content>
       </Card>
 
@@ -308,6 +337,14 @@ export function AddTransactionScreen() {
       <Button mode="contained" onPress={onSubmit} loading={isBusy} disabled={isBusy || transactionQuery.isLoading}>
         {isEditing ? 'Save changes' : 'Save'}
       </Button>
+
+      {isEditing ? (
+        <Button
+          mode="outlined"
+          onPress={() => router.replace({ pathname: '/transaction/new', params: { duplicateId: transactionId } })}>
+          Duplicate transaction
+        </Button>
+      ) : null}
 
       {isEditing ? (
         <Button

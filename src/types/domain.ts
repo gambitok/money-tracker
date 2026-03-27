@@ -30,3 +30,18 @@ export type Budget = {
   amount: number;
   created_at?: string;
 };
+
+export type RecurringTransaction = {
+  id: string;
+  user_id: string;
+  type: TransactionType;
+  amount: number;
+  currency: string;
+  category_id: string | null;
+  description: string | null;
+  frequency: 'monthly';
+  start_date: string;
+  next_run_date: string;
+  active: boolean;
+  created_at?: string;
+};

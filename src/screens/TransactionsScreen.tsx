@@ -3,9 +3,10 @@ import { Pressable, SectionList, StyleSheet, View } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { addMonths, format, isToday, isYesterday, parseISO } from 'date-fns';
 import { SymbolView } from 'expo-symbols';
-import { Button, Card, SegmentedButtons, Text, TextInput, useTheme } from 'react-native-paper';
+import { Button, Card, Icon, SegmentedButtons, Text, TextInput, useTheme } from 'react-native-paper';
 
 import { useFeed } from '@/hooks/useFeed';
+import { useBudgets } from '@/hooks/useBudgets';
 import { SelectField, type SelectOption } from '@/components/fields/SelectField';
 import type { TransactionType } from '@/types/domain';
 
@@ -17,6 +18,7 @@ export function TransactionsScreen() {
   const [typeFilter, setTypeFilter] = useState<'all' | TransactionType>('all');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const { data, isLoading, error } = useFeed(monthDate);
+  const { data: budgets } = useBudgets(monthDate);
   const incomeColor = '#1D9B5F';
   const expenseColor = '#D14B61';
 
@@ -27,9 +29,9 @@ export function TransactionsScreen() {
   }, [data?.categories]);
 
   const categoryMetaById = useMemo(() => {
-    const map = new Map<string, { color: string | null }>();
+    const map = new Map<string, { color: string | null; icon: string | null }>();
     for (const category of data?.categories ?? []) {
-      map.set(category.id, { color: category.color });
+      map.set(category.id, { color: category.color, icon: category.icon });
     }
     return map;
   }, [data?.categories]);
@@ -75,6 +77,39 @@ export function TransactionsScreen() {
         leadingColor: category.color ?? undefined,
       }));
   }, [data?.categories]);
+
+  const budgetWarnings = useMemo(() => {
+    const budgetMap = new Map((budgets ?? []).map((budget) => [budget.category_id, Number(budget.amount)]));
+    const spendingByCategory = new Map<string, number>();
+
+    for (const transaction of data?.transactions ?? []) {
+      if (transaction.type !== 'expense' || !transaction.category_id) continue;
+      spendingByCategory.set(
+        transaction.category_id,
+        (spendingByCategory.get(transaction.category_id) ?? 0) + Number(transaction.amount)
+      );
+    }
+
+    return Array.from(spendingByCategory.entries())
+      .filter(([categoryId]) => budgetMap.has(categoryId))
+      .map(([categoryId, spent]) => {
+        const budgetAmount = budgetMap.get(categoryId)!;
+        const progress = budgetAmount > 0 ? spent / budgetAmount : 0;
+        return {
+          categoryId,
+          label: categoryNameById.get(categoryId) ?? 'Category',
+          spent,
+          budgetAmount,
+          progress,
+        };
+      })
+      .filter((item) => item.progress >= 0.8)
+      .sort((a, b) => b.progress - a.progress);
+  }, [budgets, categoryNameById, data?.transactions]);
+
+  const budgetWarningByCategoryId = useMemo(() => {
+    return new Map(budgetWarnings.map((item) => [item.categoryId, item]));
+  }, [budgetWarnings]);
 
   const monthLabel = format(monthDate, 'LLLL yyyy');
   const canGoNextMonth = format(addMonths(monthDate, 1), 'yyyy-MM') <= format(new Date(), 'yyyy-MM');
@@ -146,6 +181,19 @@ export function TransactionsScreen() {
             {data?.missingRates.length ? <Text style={styles.warning}>Some currencies are not converted yet.</Text> : null}
           </View>
 
+          {budgetWarnings.length ? (
+            <Card mode="outlined" style={styles.warningCard}>
+              <Card.Content style={styles.warningCardContent}>
+                <Text variant="titleSmall">Budget alerts</Text>
+                {budgetWarnings.slice(0, 3).map((item) => (
+                  <Text key={item.categoryId} style={styles.warningText}>
+                    {item.label}: {item.progress >= 1 ? 'over budget' : `${Math.round(item.progress * 100)}% of budget used`}
+                  </Text>
+                ))}
+              </Card.Content>
+            </Card>
+          ) : null}
+
           <Card mode="outlined" style={styles.filtersCard}>
             <Card.Content style={styles.filtersContent}>
               <TextInput
@@ -193,14 +241,15 @@ export function TransactionsScreen() {
         const sign = item.type === 'expense' ? '-' : '+';
         const amountColor = item.type === 'expense' ? expenseColor : incomeColor;
         const categoryMeta = categoryMetaById.get(item.category_id ?? '');
-        const iconName = item.type === 'income' ? 'arrow.down.left.circle.fill' : 'arrow.up.right.circle.fill';
+        const iconName = categoryMeta?.icon ?? (item.type === 'income' ? 'cash-plus' : 'credit-card-outline');
+        const budgetWarning = item.type === 'expense' && item.category_id ? budgetWarningByCategoryId.get(item.category_id) : null;
 
         return (
           <Pressable
             onPress={() => router.push(`/transaction/${item.id}`)}
             style={[styles.row, { borderBottomColor: theme.colors.outlineVariant }]}>
             <View style={[styles.iconWrap, { backgroundColor: categoryMeta?.color ?? theme.colors.surfaceVariant }]}>
-              <SymbolView name={iconName} size={18} tintColor={theme.colors.onSurface} />
+              <Icon source={iconName} size={18} color={theme.colors.onSurface} />
             </View>
 
             <View style={styles.rowText}>
@@ -208,6 +257,11 @@ export function TransactionsScreen() {
               <Text style={styles.descriptionText}>
                 {description ? description : item.type === 'income' ? 'Income transaction' : 'Expense transaction'}
               </Text>
+              {budgetWarning ? (
+                <Text style={[styles.descriptionText, styles.inlineWarning]}>
+                  {budgetWarning.progress >= 1 ? 'Over budget' : `${Math.round(budgetWarning.progress * 100)}% of budget used`}
+                </Text>
+              ) : null}
             </View>
 
             <View style={styles.amountWrap}>
@@ -328,6 +382,15 @@ const styles = StyleSheet.create({
   filtersContent: {
     gap: 12,
   },
+  warningCard: {
+    borderRadius: 18,
+  },
+  warningCardContent: {
+    gap: 6,
+  },
+  warningText: {
+    color: '#D14B61',
+  },
   sectionTitle: {
     marginTop: 8,
     marginBottom: 6,
@@ -353,6 +416,10 @@ const styles = StyleSheet.create({
   },
   descriptionText: {
     opacity: 0.65,
+  },
+  inlineWarning: {
+    color: '#D14B61',
+    opacity: 1,
   },
   amountWrap: {
     alignItems: 'flex-end',

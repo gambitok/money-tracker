@@ -27,6 +27,9 @@ export function SettingsScreen() {
       <Card style={styles.card}>
         <Card.Content style={styles.cardContent}>
           <Text variant="titleMedium">Manage</Text>
+          <Link href="/recurring" asChild>
+            <Button mode="outlined">Recurring transactions</Button>
+          </Link>
           <Link href="/budgets" asChild>
             <Button mode="outlined">Manage budgets</Button>
           </Link>

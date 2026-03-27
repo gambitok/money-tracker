@@ -5,6 +5,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { SessionProvider } from '@/providers/SessionProvider';
 import { SeedDefaultsGate } from '@/components/SeedDefaultsGate';
+import { FeedbackProvider } from '@/providers/FeedbackProvider';
+import { RecurringSyncGate } from '@/components/RecurringSyncGate';
 
 export function AppProviders({ children, theme }: { children: React.ReactNode; theme: MD3Theme }) {
   const queryClient = useMemo(() => new QueryClient(), []);
@@ -13,12 +15,15 @@ export function AppProviders({ children, theme }: { children: React.ReactNode; t
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
         <PaperProvider theme={theme}>
-          <SessionProvider>
-            <SeedDefaultsGate>{children}</SeedDefaultsGate>
-          </SessionProvider>
+          <FeedbackProvider>
+            <SessionProvider>
+              <SeedDefaultsGate>
+                <RecurringSyncGate>{children}</RecurringSyncGate>
+              </SeedDefaultsGate>
+            </SessionProvider>
+          </FeedbackProvider>
         </PaperProvider>
       </SafeAreaProvider>
     </QueryClientProvider>
   );
 }
-
